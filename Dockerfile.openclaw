@@ -41,13 +41,15 @@ COPY --from=agent-builder /out/openclaw-agent /usr/local/bin/openclaw-agent
 COPY scripts/openclaw-agent-run /etc/services.d/openclaw-agent/run
 COPY scripts/openclaw-agent-finish /etc/services.d/openclaw-agent/finish
 
-# Preinstall the DingTalk channel so its channel id validates before the
-# agent's first startup reconciliation.
-RUN sed -i 's/\r$//' /etc/services.d/openclaw-agent/run \
+# Preinstall the DingTalk and ClaWeb channels so their channel ids validate
+# before the agent's first startup reconciliation.
+RUN --mount=type=bind,source=plugins/claweb-0.2.2-an-claw.tgz,target=/tmp/plugins/claweb-0.2.2-an-claw.tgz \
+  sed -i 's/\r$//' /etc/services.d/openclaw-agent/run \
   && sed -i 's/\r$//' /etc/services.d/openclaw-agent/finish \
   && chmod +x /etc/services.d/openclaw-agent/run \
   && chmod +x /etc/services.d/openclaw-agent/finish \
   && chmod +x /usr/local/bin/openclaw-agent \
+  && HOME=/defaults openclaw plugins install /tmp/plugins/claweb-0.2.2-an-claw.tgz --dangerously-force-unsafe-install \
   && HOME=/defaults openclaw plugins install @dingtalk-real-ai/dingtalk-connector \
   && chown -R abc:abc /defaults/.openclaw \
   && chown -R abc:abc /defaults/.config \
