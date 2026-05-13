@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # 构建 Dockerfile.openclaw.cn 并推送到 Docker Registry 私服
 # 用法：
-#   ./docker-build-push.sh                   # 自动读取 VERSION 末行
-#   ./docker-build-push.sh v2026.4.15        # 手动指定版本标签
-#   DOCKER_USER=admin ./docker-build-push.sh # 覆盖默认用户名
+#   ./docker-build-push.sh                              # 自动读取 VERSION 末行；CLAWeb 版本从 plugins/ 自动检测
+#   ./docker-build-push.sh v2026.4.15                   # 手动指定镜像版本标签
+#   CLAWEB_PLUGIN_VERSION=0.2.3-dev ./docker-build-push.sh  # 手动指定 CLAWeb 插件版本
+#   DOCKER_USER=admin ./docker-build-push.sh            # 覆盖默认用户名
 
 set -euo pipefail
+
+# ── 加载 .env（若存在，不覆盖已有环境变量）────────────────────────────────────
+if [ -f "${BASH_SOURCE[0]%/*}/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${BASH_SOURCE[0]%/*}/.env"
+  set +a
+fi
 
 # ── 配置区 ────────────────────────────────────────────────────────────────────
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
@@ -23,6 +32,23 @@ PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="${SCRIPT_DIR}/Dockerfile.openclaw.cn"
 BUILD_CONTEXT="${SCRIPT_DIR}"
+
+# ── CLAWeb 插件版本（优先级：环境变量 > plugins/CLAWEB_PLUGIN_VERSION 文件 > tgz 文件名）──
+if [ -z "${CLAWEB_PLUGIN_VERSION:-}" ]; then
+  if [ -f "${SCRIPT_DIR}/plugins/CLAWEB_PLUGIN_VERSION" ]; then
+    CLAWEB_PLUGIN_VERSION="$(grep -v '^[[:space:]]*#' "${SCRIPT_DIR}/plugins/CLAWEB_PLUGIN_VERSION" 2>/dev/null \
+      | sed '/^[[:space:]]*$/d' | tail -n1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
+  fi
+fi
+if [ -z "${CLAWEB_PLUGIN_VERSION:-}" ]; then
+  CLAWEB_TGZ="$(ls "${SCRIPT_DIR}/plugins/claweb-"*.tgz 2>/dev/null | sort -V | tail -n1)"
+  if [ -n "${CLAWEB_TGZ}" ]; then
+    CLAWEB_PLUGIN_VERSION="$(basename "${CLAWEB_TGZ}" .tgz | sed 's/^claweb-//')"
+  else
+    echo "ERROR: No claweb-*.tgz found in plugins/ and CLAWEB_PLUGIN_VERSION is not set" >&2
+    exit 1
+  fi
+fi
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── 版本标签解析（优先级与 CI workflow 一致）────────────────────────────────
@@ -49,12 +75,13 @@ fi
 FULL_IMAGE="${DOCKER_REGISTRY}/${DOCKER_PROJECT}/${IMAGE_NAME}"
 
 echo "========================================="
-echo "  Registry : ${DOCKER_REGISTRY}"
-echo "  Image    : ${FULL_IMAGE}"
-echo "  Tags     : latest, ${VERSION}"
-echo "  Platforms: ${PLATFORMS}"
+echo "  Registry    : ${DOCKER_REGISTRY}"
+echo "  Image       : ${FULL_IMAGE}"
+echo "  Tags        : latest, ${VERSION}"
+echo "  Platforms   : ${PLATFORMS}"
+echo "  CLAWeb plugin  : ${CLAWEB_PLUGIN_VERSION}"
+echo "  DingTalk plugin: ${DINGTALK_PLUGIN_VERSION:-latest}"
 echo "========================================="
-
 # ── Docker 登录 ──────────────────────────────────────────────────────────────
 echo "[1/3] Logging in to Docker Registry..."
 # Docker Registry 默认使用 HTTP，需要确保 /etc/docker/daemon.json 里已配置 insecure-registries
@@ -87,6 +114,8 @@ docker buildx build \
   --label "org.opencontainers.image.source=local" \
   --cache-from "type=registry,ref=${FULL_IMAGE}:buildcache" \
   --cache-to   "type=registry,ref=${FULL_IMAGE}:buildcache,mode=max" \
+  --build-arg "CLAWEB_PLUGIN_VERSION=${CLAWEB_PLUGIN_VERSION}" \
+  --build-arg "DINGTALK_PLUGIN_VERSION=${DINGTALK_PLUGIN_VERSION:-latest}" \
   --push \
   "${BUILD_CONTEXT}"
 

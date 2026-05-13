@@ -15,7 +15,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/opencla
 
 FROM node:22-bookworm-slim AS node-runtime
 
+FROM scratch AS claweb-plugin
+ARG CLAWEB_PLUGIN_VERSION
+COPY plugins/claweb-${CLAWEB_PLUGIN_VERSION}.tgz /claweb.tgz
+
 FROM lscr.io/linuxserver/webtop:ubuntu-xfce
+ARG DINGTALK_PLUGIN_VERSION=latest
 
 ENV PUID=1000
 ENV PGID=1000
@@ -30,7 +35,7 @@ RUN sed -i \
     /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates vim-tiny iputils-ping net-tools \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local /usr/local
@@ -51,7 +56,7 @@ COPY scripts/openclaw-agent-finish /etc/services.d/openclaw-agent/finish
 
 # Preinstall the DingTalk and ClaWeb channels so their channel ids validate
 # before the agent's first startup reconciliation.
-RUN --mount=type=bind,source=plugins/claweb-0.2.2-an-claw.tgz,target=/tmp/claweb-0.2.2-an-claw.tgz \
+RUN --mount=type=bind,from=claweb-plugin,source=/claweb.tgz,target=/tmp/claweb.tgz \
   sed -i 's/\r$//' /etc/services.d/openclaw-agent/run \
   && sed -i 's/\r$//' /etc/services.d/openclaw-agent/finish \
   && chmod +x /etc/services.d/openclaw-agent/run \
@@ -59,8 +64,9 @@ RUN --mount=type=bind,source=plugins/claweb-0.2.2-an-claw.tgz,target=/tmp/claweb
   && chmod +x /usr/local/bin/openclaw-agent \
   && sed -i 's|\b12e4\b|6e5|g' /usr/local/lib/node_modules/openclaw/dist/install-*.js \
   && HOME=/defaults npm config -g set registry https://registry.npmmirror.com \
-  && HOME=/defaults openclaw plugins install /tmp/claweb-0.2.2-an-claw.tgz --dangerously-force-unsafe-install \
-  && HOME=/defaults openclaw plugins install @dingtalk-real-ai/dingtalk-connector \
+  && HOME=/defaults openclaw plugins install /tmp/claweb.tgz --dangerously-force-unsafe-install \
+  && HOME=/defaults openclaw plugins install @dingtalk-real-ai/dingtalk-connector@${DINGTALK_PLUGIN_VERSION} \
+  && rm -fr /tmp/openclaw-npm-pack-* \
   && chown -R abc:abc /defaults/.openclaw \
   && chown -R abc:abc /defaults/.config \
   && mkdir -p /var/lib/openclaw-agent /var/log/openclaw-agent /etc/openclaw-agent
